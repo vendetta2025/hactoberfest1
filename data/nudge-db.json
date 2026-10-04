@@ -1,0 +1,190 @@
+{
+  "users": [
+    {
+      "id": "user_muskan_demo",
+      "email": "muskan@demo.nudge.app",
+      "name": "Muskan",
+      "passwordHash": "demo_password_hash",
+      "avatarColor": "#6366f1",
+      "reminderAdvanceHours": 24,
+      "browserNotificationsEnabled": true,
+      "createdAt": "2026-10-01T08:00:00.000Z"
+    },
+    {
+      "id": "user_apoorv_demo",
+      "email": "apoorv@demo.nudge.app",
+      "name": "Apoorv",
+      "passwordHash": "demo_password_hash",
+      "avatarColor": "#0ea5e9",
+      "reminderAdvanceHours": 24,
+      "browserNotificationsEnabled": true,
+      "createdAt": "2026-10-01T08:30:00.000Z"
+    },
+    {
+      "id": "user_rohan_demo",
+      "email": "rohan@demo.nudge.app",
+      "name": "Rohan",
+      "passwordHash": "demo_password_hash",
+      "avatarColor": "#10b981",
+      "reminderAdvanceHours": 24,
+      "browserNotificationsEnabled": true,
+      "createdAt": "2026-10-01T09:00:00.000Z"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "task_dbms_demo",
+      "ownerId": "user_muskan_demo",
+      "title": "DBMS Assignment",
+      "description": "Complete Relational Algebra, B+ Tree indexing problems, and normalized schema design (BCNF).",
+      "deadline": "2026-10-20T23:59:00.000Z",
+      "status": "in_progress",
+      "sharedWith": [
+        "user_apoorv_demo",
+        "user_rohan_demo"
+      ],
+      "lastUpdatedBy": "user_muskan_demo",
+      "lastUpdatedByName": "Muskan",
+      "lastUpdatedRole": "OWNER",
+      "createdAt": "2026-10-02T10:00:00.000Z",
+      "updatedAt": "2026-10-02T10:00:00.000Z"
+    },
+    {
+      "id": "task_os_demo",
+      "ownerId": "user_muskan_demo",
+      "title": "Operating Systems Lab 3",
+      "description": "Implement multi-threaded producer-consumer problem with mutex locks and semaphores.",
+      "deadline": "2026-10-28T18:00:00.000Z",
+      "status": "pending",
+      "sharedWith": [
+        "user_apoorv_demo"
+      ],
+      "lastUpdatedBy": "user_muskan_demo",
+      "lastUpdatedByName": "Muskan",
+      "lastUpdatedRole": "OWNER",
+      "createdAt": "2026-10-03T11:00:00.000Z",
+      "updatedAt": "2026-10-03T11:00:00.000Z"
+    },
+    {
+      "id": "task_apoorv_demo",
+      "ownerId": "user_apoorv_demo",
+      "title": "Distributed Systems Project Proposal",
+      "description": "Draft the Raft consensus algorithm simulation benchmark report.",
+      "deadline": "2026-10-25T23:59:00.000Z",
+      "status": "in_progress",
+      "sharedWith": [
+        "user_muskan_demo"
+      ],
+      "lastUpdatedBy": "user_apoorv_demo",
+      "lastUpdatedByName": "Apoorv",
+      "lastUpdatedRole": "OWNER",
+      "createdAt": "2026-10-03T14:00:00.000Z",
+      "updatedAt": "2026-10-03T14:00:00.000Z"
+    }
+  ],
+  "trustedRelationships": [
+    {
+      "id": "rel_muskan_apoorv",
+      "ownerId": "user_muskan_demo",
+      "trustedUserId": "user_apoorv_demo",
+      "trustedUserName": "Apoorv",
+      "trustedUserEmail": "apoorv@demo.nudge.app",
+      "role": "PRIMARY_HELPER",
+      "notes": "Co-lead in database lab. Can update deadlines & reminders without approval.",
+      "createdAt": "2026-10-02T10:15:00.000Z",
+      "updatedAt": "2026-10-02T10:15:00.000Z"
+    },
+    {
+      "id": "rel_muskan_rohan",
+      "ownerId": "user_muskan_demo",
+      "trustedUserId": "user_rohan_demo",
+      "trustedUserName": "Rohan",
+      "trustedUserEmail": "rohan@demo.nudge.app",
+      "role": "HELPER",
+      "notes": "Study group peer. Can view shared assignments and suggest adjustments.",
+      "createdAt": "2026-10-02T10:30:00.000Z",
+      "updatedAt": "2026-10-02T10:30:00.000Z"
+    }
+  ],
+  "reminders": [
+    {
+      "id": "rem_dbms_1",
+      "taskId": "task_dbms_demo",
+      "taskTitle": "DBMS Assignment",
+      "userId": "user_muskan_demo",
+      "remindAt": "2026-10-19T10:00:00.000Z",
+      "offsetHoursBefore": 24,
+      "status": "scheduled",
+      "label": "1 day before deadline",
+      "createdAt": "2026-10-02T10:05:00.000Z",
+      "updatedAt": "2026-10-02T10:05:00.000Z"
+    }
+  ],
+  "notifications": [
+    {
+      "id": "notif_welcome_muskan",
+      "userId": "user_muskan_demo",
+      "title": "Primary Helper Configured",
+      "message": "Apoorv was designated as your Primary Helper. They can help keep your deadlines and reminders updated.",
+      "actorId": "user_muskan_demo",
+      "actorName": "Muskan",
+      "actorRole": "OWNER",
+      "taskId": "task_dbms_demo",
+      "taskTitle": "DBMS Assignment",
+      "type": "ROLE_CHANGED",
+      "details": {
+        "field": "Primary Helper",
+        "oldValue": "None",
+        "newValue": "Apoorv"
+      },
+      "read": false,
+      "createdAt": "2026-10-02T10:15:00.000Z"
+    }
+  ],
+  "activityLogs": [
+    {
+      "id": "act_1",
+      "taskId": "task_dbms_demo",
+      "taskTitle": "DBMS Assignment",
+      "ownerId": "user_muskan_demo",
+      "actorId": "user_muskan_demo",
+      "actorName": "Muskan",
+      "actorRole": "OWNER",
+      "action": "TASK_CREATED",
+      "description": "Created task \"DBMS Assignment\" with deadline October 20.",
+      "changes": [
+        {
+          "field": "deadline",
+          "oldValue": null,
+          "newValue": "2026-10-20"
+        },
+        {
+          "field": "status",
+          "oldValue": null,
+          "newValue": "in_progress"
+        }
+      ],
+      "createdAt": "2026-10-02T10:00:00.000Z"
+    },
+    {
+      "id": "act_2",
+      "taskId": "task_dbms_demo",
+      "taskTitle": "DBMS Assignment",
+      "ownerId": "user_muskan_demo",
+      "actorId": "user_muskan_demo",
+      "actorName": "Muskan",
+      "actorRole": "OWNER",
+      "action": "ROLE_UPDATED",
+      "description": "Added Apoorv as Primary Helper.",
+      "changes": [
+        {
+          "field": "trustedPerson",
+          "oldValue": null,
+          "newValue": "Apoorv (PRIMARY_HELPER)"
+        }
+      ],
+      "createdAt": "2026-10-02T10:15:00.000Z"
+    }
+  ],
+  "changeRequests": []
+}

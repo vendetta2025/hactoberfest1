@@ -1,0 +1,8 @@
+{
+  "name": "Nudge",
+  "description": "Personal productivity assistant that remembers deadlines for users and lets people they trust help manage them.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
