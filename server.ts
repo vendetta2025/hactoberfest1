@@ -7,11 +7,25 @@ import { db } from './server/db.ts';
 import type { UserRole, Task, Notification, ActivityLog } from './server/db.ts';
 import { hashPassword, createSessionToken, getUserFromToken } from './server/auth.ts';
 import { processNudgeQuery } from './server/ai.ts';
+import { getVapidPublicKey, sendPushToUser, dispatchNotificationEvent } from './server/push.ts';
+import { startReminderScheduler } from './server/scheduler.ts';
 
 dotenv.config();
 
 const app = express();
 app.use(express.json());
+
+// Serve Service Worker at root scope
+app.get('/sw.js', (_req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'application/javascript');
+  res.setHeader('Service-Worker-Allowed', '/');
+  const swPath = path.resolve(process.cwd(), 'public/sw.js');
+  if (fs.existsSync(swPath)) {
+    res.sendFile(swPath);
+  } else {
+    res.status(404).send('Service worker file not found');
+  }
+});
 
 // Auth Middleware
 function authRequired(req: Request, res: Response, next: NextFunction) {
@@ -193,7 +207,7 @@ app.get('/api/tasks/:id', authRequired, (req: Request, res: Response) => {
   });
 });
 
-app.post('/api/tasks', authRequired, (req: Request, res: Response) => {
+app.post('/api/tasks', authRequired, async (req: Request, res: Response) => {
   const currentUser = (req as any).user;
   const { title, description, deadline, targetOwnerId } = req.body;
 
@@ -252,33 +266,29 @@ app.post('/api/tasks', authRequired, (req: Request, res: Response) => {
     createdAt: new Date().toISOString(),
   });
 
-  // If created by Primary Helper, notify Owner
+  // If created by Primary Helper, notify Owner with Web Push + In-App
   if (actorRole === 'PRIMARY_HELPER') {
-    db.addNotification({
-      id: `notif_${Date.now()}`,
+    await dispatchNotificationEvent({
       userId: ownerId,
-      title: 'New Task Created by Primary Helper',
-      message: `${currentUser.name} created a new task "${newTask.title}" with deadline ${new Date(newTask.deadline).toLocaleDateString()}. Reminders have been scheduled.`,
+      type: 'TASK_ASSIGNED',
       actorId: currentUser.id,
       actorName: currentUser.name,
       actorRole: 'PRIMARY_HELPER',
       taskId: newTask.id,
       taskTitle: newTask.title,
-      type: 'TASK_CREATED',
+      deadline: newTask.deadline,
       details: {
         field: 'Task Created',
         oldValue: '',
         newValue: newTask.title,
       },
-      read: false,
-      createdAt: new Date().toISOString(),
     });
   }
 
   res.status(201).json(newTask);
 });
 
-app.put('/api/tasks/:id', authRequired, (req: Request, res: Response) => {
+app.put('/api/tasks/:id', authRequired, async (req: Request, res: Response) => {
   const currentUser = (req as any).user;
   const task = db.getTaskById(req.params.id);
   if (!task) {
@@ -308,25 +318,21 @@ app.put('/api/tasks/:id', authRequired, (req: Request, res: Response) => {
         createdAt: new Date().toISOString(),
       });
 
-      // Notify Owner about change request
-      db.addNotification({
-        id: `notif_${Date.now()}`,
+      // Notify Owner about change request with Web Push + In-App
+      await dispatchNotificationEvent({
         userId: task.ownerId,
-        title: 'Approval Required: Task Change Requested',
-        message: `${currentUser.name} (Helper) suggested changes to "${task.title}". Review and approve or reject.`,
+        type: 'APPROVAL_REQUIRED',
         actorId: currentUser.id,
         actorName: currentUser.name,
         actorRole: 'HELPER',
         taskId: task.id,
         taskTitle: task.title,
-        type: 'APPROVAL_REQUEST',
+        deadline: req.body.deadline || task.deadline,
         details: {
           field: 'Change Request',
           oldValue: task.deadline,
           newValue: req.body.deadline || task.deadline,
         },
-        read: false,
-        createdAt: new Date().toISOString(),
       });
 
       res.status(202).json({
@@ -397,31 +403,22 @@ app.put('/api/tasks/:id', authRequired, (req: Request, res: Response) => {
     createdAt: new Date().toISOString(),
   });
 
-  // If updated by Primary Helper, generate clear notification for the Owner!
+  // If updated by Primary Helper, generate clear notification for the Owner with Web Push!
   if (actorRole === 'PRIMARY_HELPER') {
-    let message = `${currentUser.name} updated your ${task.title}.`;
-    if (deadlineChanged) {
-      message = `${currentUser.name} updated your ${task.title}.\nDeadline: ${oldDeadlineFormatted} → ${newDeadlineFormatted}.\nYour reminders have been adjusted.`;
-    }
-
-    db.addNotification({
-      id: `notif_${Date.now()}`,
+    await dispatchNotificationEvent({
       userId: task.ownerId,
-      title: `${task.title} Updated by ${currentUser.name}`,
-      message,
+      type: deadlineChanged ? 'DEADLINE_CHANGED' : 'TASK_UPDATED',
       actorId: currentUser.id,
       actorName: currentUser.name,
       actorRole: 'PRIMARY_HELPER',
       taskId: task.id,
       taskTitle: task.title,
-      type: deadlineChanged ? 'DEADLINE_CHANGED' : 'TASK_UPDATED',
+      deadline: updatedTask.deadline,
       details: {
         field: 'Deadline',
         oldValue: oldDeadlineFormatted || task.deadline,
         newValue: newDeadlineFormatted || updatedTask.deadline,
       },
-      read: false,
-      createdAt: new Date().toISOString(),
     });
   }
 
@@ -616,6 +613,35 @@ app.get('/api/reminders', authRequired, (req: Request, res: Response) => {
   res.json(reminders);
 });
 
+app.post('/api/reminders', authRequired, (req: Request, res: Response) => {
+  const currentUser = (req as any).user;
+  const { taskId, taskTitle, remindAt, label, offsetHoursBefore } = req.body;
+  if (!remindAt) {
+    res.status(400).json({ error: 'remindAt ISO time is required' });
+    return;
+  }
+
+  const reminder = db.addReminder({
+    id: `rem_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    taskId: taskId || '',
+    taskTitle: taskTitle || 'Custom Reminder',
+    userId: currentUser.id,
+    remindAt: new Date(remindAt).toISOString(),
+    offsetHoursBefore: offsetHoursBefore || 24,
+    status: 'scheduled',
+    label: label || 'Custom reminder',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+
+  res.status(201).json(reminder);
+});
+
+app.delete('/api/reminders/:id', authRequired, (req: Request, res: Response) => {
+  db.deleteReminder(req.params.id);
+  res.json({ success: true });
+});
+
 app.get('/api/notifications', authRequired, (req: Request, res: Response) => {
   const currentUser = (req as any).user;
   const notifications = db.getNotificationsForUser(currentUser.id);
@@ -651,7 +677,7 @@ app.get('/api/change-requests', authRequired, (req: Request, res: Response) => {
   res.json(requests);
 });
 
-app.post('/api/change-requests/:id/review', authRequired, (req: Request, res: Response) => {
+app.post('/api/change-requests/:id/review', authRequired, async (req: Request, res: Response) => {
   const currentUser = (req as any).user;
   const { approve } = req.body;
 
@@ -694,25 +720,22 @@ app.post('/api/change-requests/:id/review', authRequired, (req: Request, res: Re
     }
   }
 
-  // Notify requester
-  db.addNotification({
-    id: `notif_${Date.now()}`,
+  // Notify requester with Web Push + In-App
+  await dispatchNotificationEvent({
     userId: cr.requesterId,
-    title: approve ? 'Change Request Approved' : 'Change Request Declined',
-    message: `${currentUser.name} ${approve ? 'approved' : 'declined'} your change suggestion for "${cr.taskTitle}".`,
+    type: approve ? 'CHANGE_APPROVED' : 'TASK_UPDATED',
     actorId: currentUser.id,
     actorName: currentUser.name,
     actorRole: 'OWNER',
     taskId: cr.taskId,
     taskTitle: cr.taskTitle,
-    type: 'CHANGE_APPROVED',
+    customTitle: approve ? 'Change Request Approved' : 'Change Request Declined',
+    customMessage: `${currentUser.name} ${approve ? 'approved' : 'declined'} your change suggestion for "${cr.taskTitle}".`,
     details: {
       field: 'Decision',
       oldValue: 'pending',
       newValue: approve ? 'approved' : 'rejected',
     },
-    read: false,
-    createdAt: new Date().toISOString(),
   });
 
   res.json({ success: true, changeRequest: cr });
@@ -794,24 +817,22 @@ app.post('/api/demo/run-scenario', async (_req: Request, res: Response) => {
     createdAt: new Date().toISOString(),
   });
 
-  const notif = db.addNotification({
-    id: `notif_${Date.now()}`,
+  const { notif } = await dispatchNotificationEvent({
     userId: muskan.id,
-    title: 'Apoorv updated your DBMS Assignment',
-    message: 'Apoorv updated your DBMS Assignment.\nDeadline: Oct 20 → Oct 24.\nYour reminders have been adjusted.',
+    type: 'DEADLINE_CHANGED',
     actorId: apoorv.id,
     actorName: apoorv.name,
     actorRole: 'PRIMARY_HELPER',
     taskId: task.id,
     taskTitle: task.title,
-    type: 'DEADLINE_CHANGED',
+    deadline: updatedTask.deadline,
     details: {
       field: 'Deadline',
       oldValue: 'Oct 20',
       newValue: 'Oct 24',
     },
-    read: false,
-    createdAt: new Date().toISOString(),
+    customTitle: 'Apoorv updated your DBMS Assignment',
+    customMessage: 'Apoorv updated your DBMS Assignment.\nDeadline: Oct 20 → Oct 24.\nYour reminders have been adjusted.',
   });
 
   res.json({
@@ -824,7 +845,7 @@ app.post('/api/demo/run-scenario', async (_req: Request, res: Response) => {
       '5. Persistent database updated (nudge-db.json)',
       '6. Associated reminder recalculated (shifted to Oct 23, 10:00 AM)',
       '7. Recorded in immutable Activity History audit log',
-      '8. In-app notification generated for Muskan',
+      '8. Real Web Push & In-app notification delivered to Muskan',
     ],
     notificationMessage: notif.message,
     task: updatedTask,
@@ -836,10 +857,96 @@ app.post('/api/demo/run-scenario', async (_req: Request, res: Response) => {
 });
 
 // ----------------------------------------------------
+// WEB PUSH SUBSCRIPTIONS & VAPID ENDPOINTS
+// ----------------------------------------------------
+
+app.get('/api/push/vapid-public-key', (_req: Request, res: Response) => {
+  res.json({ publicKey: getVapidPublicKey() });
+});
+
+app.post('/api/push/subscribe', authRequired, (req: Request, res: Response) => {
+  const currentUser = (req as any).user;
+  const { endpoint, keys } = req.body;
+  if (!endpoint || !keys || !keys.p256dh || !keys.auth) {
+    res.status(400).json({ error: 'Invalid PushSubscription payload' });
+    return;
+  }
+
+  const sub = db.savePushSubscription({
+    id: `sub_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    userId: currentUser.id,
+    endpoint,
+    keys,
+    userAgent: req.headers['user-agent'] || '',
+    createdAt: new Date().toISOString(),
+  });
+
+  db.updateUser(currentUser.id, { browserNotificationsEnabled: true });
+  res.json({ success: true, subscription: sub });
+});
+
+app.post('/api/push/unsubscribe', authRequired, (req: Request, res: Response) => {
+  const currentUser = (req as any).user;
+  const { endpoint } = req.body;
+  if (endpoint) {
+    db.removePushSubscription(endpoint);
+  } else {
+    db.removePushSubscriptionsForUser(currentUser.id);
+  }
+  db.updateUser(currentUser.id, { browserNotificationsEnabled: false });
+  res.json({ success: true });
+});
+
+app.get('/api/push/status', authRequired, (req: Request, res: Response) => {
+  const currentUser = (req as any).user;
+  const subs = db.getPushSubscriptionsForUser(currentUser.id);
+  res.json({
+    enabled: currentUser.browserNotificationsEnabled,
+    subscriptionCount: subs.length,
+    hasActiveSubscription: subs.length > 0,
+  });
+});
+
+app.post('/api/push/test', authRequired, async (req: Request, res: Response) => {
+  const currentUser = (req as any).user;
+  const subs = db.getPushSubscriptionsForUser(currentUser.id);
+  if (subs.length === 0) {
+    res.status(400).json({
+      success: false,
+      error: 'No active push subscriptions found for your account. Please enable browser notifications in Settings first.',
+    });
+    return;
+  }
+
+  const testPayload = {
+    title: '🔔 Nudgify Test Alert',
+    body: `Hello ${currentUser.name}! Real Web Push background notifications are active and working on this device.`,
+    tag: `test-${Date.now()}`,
+    data: {
+      url: '/?tab=settings',
+      type: 'TEST_PUSH',
+    },
+  };
+
+  const result = await sendPushToUser(currentUser.id, testPayload);
+  res.json({
+    success: result.sentCount > 0,
+    sentCount: result.sentCount,
+    failedCount: result.failedCount,
+    message: result.sentCount > 0
+      ? `Real Web Push notification dispatched successfully to ${result.sentCount} active subscription(s)!`
+      : 'Failed delivering push to your registered browser subscription. Please re-enable notifications.',
+  });
+});
+
+// ----------------------------------------------------
 // VITE MIDDLEWARE / STATIC ASSETS
 // ----------------------------------------------------
 
 async function startServer() {
+  // Start server-side reminder scheduler
+  startReminderScheduler(15000);
+
   const isProd = process.env.NODE_ENV === 'production';
 
   if (!isProd) {

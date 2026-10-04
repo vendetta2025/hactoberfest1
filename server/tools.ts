@@ -2,6 +2,7 @@ import { Type } from '@google/genai';
 import type { FunctionDeclaration } from '@google/genai';
 import { db } from './db.ts';
 import type { Task, Reminder, Notification, ActivityLog, ChangeRequest, UserRole } from './db.ts';
+import { dispatchNotificationEvent } from './push.ts';
 
 export interface ToolContextUser {
   id: string;
@@ -136,17 +137,17 @@ export const TOOL_DECLARATIONS: FunctionDeclaration[] = [
   // ---------------- WRITE TOOLS ----------------
   {
     name: 'create_task',
-    description: 'Create a new task or assignment with a title, deadline, optional description, and optional target owner if the user is Primary Helper.',
+    description: 'Create a new task or assignment with a title, optional deadline, optional description, and optional target owner if the user is Primary Helper.',
     parameters: {
       type: Type.OBJECT,
       properties: {
         title: {
           type: Type.STRING,
-          description: 'The title of the new task (e.g. "NeoCollab info", "DBMS Assignment").',
+          description: 'The exact title of the new task extracted from the user prompt.',
         },
         deadline: {
           type: Type.STRING,
-          description: 'ISO 8601 date string or YYYY-MM-DD for when the task is due.',
+          description: 'Optional ISO 8601 date string or YYYY-MM-DD for when the task is due. Omit or leave empty if the user requested without a deadline or with no deadline.',
         },
         description: {
           type: Type.STRING,
@@ -157,7 +158,7 @@ export const TOOL_DECLARATIONS: FunctionDeclaration[] = [
           description: 'Optional name of the user who will own this task. Defaults to current user unless Primary Helper specifies owner.',
         },
       },
-      required: ['title', 'deadline'],
+      required: ['title'],
     },
   },
   {
@@ -557,7 +558,17 @@ export async function executeTool(
       }
 
       const actorRole: UserRole = isOwner ? 'OWNER' : 'PRIMARY_HELPER';
-      const deadlineIso = new Date(args.deadline).toISOString();
+      
+      let deadlineIso = '';
+      if (args.deadline && typeof args.deadline === 'string' && args.deadline.trim()) {
+        const lowerDl = args.deadline.toLowerCase().trim();
+        if (lowerDl !== 'none' && lowerDl !== 'null' && lowerDl !== 'no deadline' && lowerDl !== 'without a deadline') {
+          const d = new Date(args.deadline);
+          if (!isNaN(d.getTime())) {
+            deadlineIso = d.toISOString();
+          }
+        }
+      }
 
       const newTask: Task = {
         id: `task_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
@@ -575,7 +586,13 @@ export async function executeTool(
       };
 
       db.addTask(newTask);
-      db.recalculateRemindersForTask(newTask);
+      if (deadlineIso) {
+        db.recalculateRemindersForTask(newTask);
+      }
+
+      const deadlineDisplay = deadlineIso
+        ? new Date(deadlineIso).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
+        : 'None (no deadline)';
 
       db.addActivityLog({
         id: `act_${Date.now()}`,
@@ -586,32 +603,30 @@ export async function executeTool(
         actorName: actor.name,
         actorRole,
         action: 'TASK_CREATED',
-        description: `${actor.name} (${actorRole}) created task "${newTask.title}" due ${new Date(newTask.deadline).toLocaleDateString()}.`,
-        changes: [{ field: 'deadline', oldValue: null, newValue: newTask.deadline }],
+        description: deadlineIso 
+          ? `${actor.name} (${actorRole}) created task "${newTask.title}" due ${deadlineDisplay}.`
+          : `${actor.name} (${actorRole}) created task "${newTask.title}" without a deadline.`,
+        changes: [{ field: 'deadline', oldValue: null, newValue: deadlineIso || null }],
         createdAt: new Date().toISOString(),
       });
 
       if (!isOwner) {
-        db.addNotification({
-          id: `notif_${Date.now()}`,
+        await dispatchNotificationEvent({
           userId: target.id,
-          title: `New Task Created by ${actor.name}`,
-          message: `${actor.name} created a new task "${newTask.title}" for you due ${new Date(newTask.deadline).toLocaleDateString()}. Reminders are scheduled.`,
+          type: 'TASK_ASSIGNED',
           actorId: actor.id,
           actorName: actor.name,
           actorRole: 'PRIMARY_HELPER',
           taskId: newTask.id,
           taskTitle: newTask.title,
-          type: 'TASK_CREATED',
+          deadline: newTask.deadline,
           details: { field: 'Task Created', oldValue: '', newValue: newTask.title },
-          read: false,
-          createdAt: new Date().toISOString(),
         });
       }
 
       return {
         success: true,
-        message: `✓ Created task "${newTask.title}" due ${new Date(newTask.deadline).toLocaleDateString()}.`,
+        message: `✓ Created task "${newTask.title}"\nDeadline: ${deadlineDisplay}`,
         task: newTask,
         field: 'Task Created',
         oldValue: '',
@@ -619,7 +634,7 @@ export async function executeTool(
         changedBy: `${actor.name} · ${actorRole === 'PRIMARY_HELPER' ? 'Primary Helper' : 'Owner'}`,
         role: actorRole,
         targetUser: target.name,
-        remindersAdjusted: true,
+        remindersAdjusted: Boolean(deadlineIso),
       };
     }
 
@@ -803,20 +818,16 @@ export async function executeTool(
           createdAt: new Date().toISOString(),
         });
 
-        db.addNotification({
-          id: `notif_${Date.now()}`,
+        await dispatchNotificationEvent({
           userId: target.id,
-          title: 'Approval Required: Deadline Change Requested',
-          message: `${actor.name} (Helper) suggested moving "${task.title}" deadline to ${newDateFormatted}. Approval required.`,
+          type: 'APPROVAL_REQUIRED',
           actorId: actor.id,
           actorName: actor.name,
           actorRole: 'HELPER',
           taskId: task.id,
           taskTitle: task.title,
-          type: 'APPROVAL_REQUEST',
+          deadline: newDeadlineIso,
           details: { field: 'Deadline', oldValue: oldDateFormatted, newValue: newDateFormatted },
-          read: false,
-          createdAt: new Date().toISOString(),
         });
 
         return {
@@ -855,20 +866,16 @@ export async function executeTool(
       });
 
       if (!isOwner) {
-        db.addNotification({
-          id: `notif_${Date.now()}`,
+        await dispatchNotificationEvent({
           userId: target.id,
-          title: `${task.title} Deadline Updated`,
-          message: `${actor.name} updated your ${task.title}.\nDeadline: ${oldDateFormatted} → ${newDateFormatted}.\nYour reminders have been adjusted.`,
+          type: 'DEADLINE_CHANGED',
           actorId: actor.id,
           actorName: actor.name,
           actorRole: 'PRIMARY_HELPER',
           taskId: task.id,
           taskTitle: task.title,
-          type: 'DEADLINE_CHANGED',
+          deadline: updated.deadline,
           details: { field: 'Deadline', oldValue: oldDateFormatted, newValue: newDateFormatted },
-          read: false,
-          createdAt: new Date().toISOString(),
         });
       }
 
@@ -897,8 +904,26 @@ export async function executeTool(
         return { success: false, error: 'Permission Denied: Only Owner or Primary Helper can set reminders directly.', message: 'Unauthorized' };
       }
 
-      const task = db.findTaskByTitle(target.id, args.taskTitle);
-      if (!task) return { success: false, error: `Task "${args.taskTitle}" not found.`, message: 'Task not found' };
+      let task = db.findTaskByTitle(target.id, args.taskTitle);
+      if (!task) {
+        const actorRole: UserRole = isOwner ? 'OWNER' : 'PRIMARY_HELPER';
+        const deadlineIso = args.remindAt ? new Date(args.remindAt).toISOString() : '';
+        task = {
+          id: `task_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          ownerId: target.id,
+          title: args.taskTitle.trim(),
+          description: 'Created via reminder command.',
+          deadline: deadlineIso,
+          status: 'pending',
+          sharedWith: [actor.id],
+          lastUpdatedBy: actor.id,
+          lastUpdatedByName: actor.name,
+          lastUpdatedRole: actorRole,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        db.addTask(task);
+      }
 
       const remindAtIso = new Date(args.remindAt).toISOString();
       const newReminder = db.addReminder({

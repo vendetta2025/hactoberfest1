@@ -52,10 +52,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const now = new Date();
   const upcomingTasks = tasks
     .filter(t => t.status !== 'completed')
-    .sort((a, b) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime());
+    .sort((a, b) => {
+      const timeA = a.deadline && !isNaN(new Date(a.deadline).getTime()) ? new Date(a.deadline).getTime() : Infinity;
+      const timeB = b.deadline && !isNaN(new Date(b.deadline).getTime()) ? new Date(b.deadline).getTime() : Infinity;
+      return timeA - timeB;
+    });
 
-  const overdueTasks = upcomingTasks.filter(t => new Date(t.deadline).getTime() < now.getTime());
-  const activeUpcoming = upcomingTasks.filter(t => new Date(t.deadline).getTime() >= now.getTime());
+  const overdueTasks = upcomingTasks.filter(t => t.deadline && !isNaN(new Date(t.deadline).getTime()) && new Date(t.deadline).getTime() < now.getTime());
+  const activeUpcoming = upcomingTasks.filter(t => !t.deadline || new Date(t.deadline).getTime() >= now.getTime());
 
   // Today / upcoming reminders
   const activeReminders = reminders
@@ -66,6 +70,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   // Time remaining helper
   const getDaysRemaining = (isoDate: string) => {
+    if (!isoDate || isNaN(new Date(isoDate).getTime())) return 'No deadline';
     const diff = new Date(isoDate).getTime() - Date.now();
     const days = Math.ceil(diff / (1000 * 60 * 60 * 24));
     if (days < 0) return `${Math.abs(days)}d overdue`;
@@ -173,11 +178,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             ) : (
               <div className="divide-y divide-stone-100">
                 {upcomingTasks.slice(0, 4).map(task => {
-                  const deadlineStr = new Date(task.deadline).toLocaleDateString('en-US', {
-                    month: 'short',
-                    day: 'numeric',
-                    weekday: 'short',
-                  });
+                  const deadlineStr = task.deadline && !isNaN(new Date(task.deadline).getTime())
+                    ? new Date(task.deadline).toLocaleDateString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                        weekday: 'short',
+                      })
+                    : 'No deadline';
                   const isDbms = task.title.includes('DBMS');
 
                   return (

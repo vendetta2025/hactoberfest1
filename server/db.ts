@@ -54,6 +54,21 @@ export interface Reminder {
   updatedAt: string;
 }
 
+export type NotificationType =
+  | 'TASK_ASSIGNED'
+  | 'TASK_UPDATED'
+  | 'DEADLINE_CHANGED'
+  | 'TASK_COMPLETED'
+  | 'TASK_REOPENED'
+  | 'APPROVAL_REQUIRED'
+  | 'DEADLINE_24_HOURS'
+  | 'TASK_OVERDUE'
+  | 'CUSTOM_REMINDER'
+  | 'TASK_CREATED'
+  | 'APPROVAL_REQUEST'
+  | 'CHANGE_APPROVED'
+  | 'ROLE_CHANGED';
+
 export interface Notification {
   id: string;
   userId: string; // Target recipient (e.g. Muskan)
@@ -64,13 +79,25 @@ export interface Notification {
   actorRole: 'PRIMARY_HELPER' | 'HELPER' | 'OWNER';
   taskId: string;
   taskTitle: string;
-  type: 'DEADLINE_CHANGED' | 'TASK_UPDATED' | 'TASK_CREATED' | 'APPROVAL_REQUEST' | 'CHANGE_APPROVED' | 'ROLE_CHANGED';
+  type: NotificationType;
   details: {
     field: string;
     oldValue: string;
     newValue: string;
   };
   read: boolean;
+  createdAt: string;
+}
+
+export interface UserPushSubscription {
+  id: string;
+  userId: string;
+  endpoint: string;
+  keys: {
+    p256dh: string;
+    auth: string;
+  };
+  userAgent?: string;
   createdAt: string;
 }
 
@@ -117,6 +144,7 @@ export interface DatabaseSchema {
   notifications: Notification[];
   activityLogs: ActivityLog[];
   changeRequests: ChangeRequest[];
+  pushSubscriptions: UserPushSubscription[];
 }
 
 const DB_DIR = path.resolve(process.cwd(), 'data');
@@ -303,6 +331,7 @@ export function getInitialSeed(): DatabaseSchema {
       },
     ],
     changeRequests: [],
+    pushSubscriptions: [],
   };
 }
 
@@ -323,6 +352,7 @@ class Database {
         const raw = fs.readFileSync(DB_FILE, 'utf-8');
         const parsed = JSON.parse(raw);
         if (parsed.users && parsed.tasks && parsed.trustedRelationships) {
+          parsed.pushSubscriptions = parsed.pushSubscriptions || [];
           return parsed;
         }
       }
@@ -531,6 +561,9 @@ class Database {
   }
 
   public recalculateRemindersForTask(task: Task) {
+    if (!task.deadline || isNaN(new Date(task.deadline).getTime())) {
+      return;
+    }
     const taskReminders = this.data.reminders.filter(r => r.taskId === task.id);
     const deadlineTime = new Date(task.deadline).getTime();
 
@@ -633,6 +666,73 @@ class Database {
     cr.reviewedAt = new Date().toISOString();
     this.save();
     return cr;
+  }
+
+  // Push Subscriptions
+  public getPushSubscriptionsForUser(userId: string): UserPushSubscription[] {
+    this.data.pushSubscriptions = this.data.pushSubscriptions || [];
+    return this.data.pushSubscriptions.filter(s => s.userId === userId);
+  }
+
+  public savePushSubscription(sub: UserPushSubscription): UserPushSubscription {
+    this.data.pushSubscriptions = this.data.pushSubscriptions || [];
+    const idx = this.data.pushSubscriptions.findIndex(s => s.endpoint === sub.endpoint);
+    if (idx !== -1) {
+      this.data.pushSubscriptions[idx] = sub;
+    } else {
+      this.data.pushSubscriptions.push(sub);
+    }
+    this.save();
+    return sub;
+  }
+
+  public removePushSubscription(endpoint: string): boolean {
+    this.data.pushSubscriptions = this.data.pushSubscriptions || [];
+    const initialLen = this.data.pushSubscriptions.length;
+    this.data.pushSubscriptions = this.data.pushSubscriptions.filter(s => s.endpoint !== endpoint);
+    if (this.data.pushSubscriptions.length !== initialLen) {
+      this.save();
+      return true;
+    }
+    return false;
+  }
+
+  public removePushSubscriptionsForUser(userId: string): void {
+    this.data.pushSubscriptions = this.data.pushSubscriptions || [];
+    this.data.pushSubscriptions = this.data.pushSubscriptions.filter(s => s.userId !== userId);
+    this.save();
+  }
+
+  // Pending Reminders (server-side scheduled triggers)
+  public getPendingReminders(nowMs: number = Date.now()): Reminder[] {
+    return this.data.reminders.filter(r => {
+      if (r.status !== 'scheduled') return false;
+      const remindTime = new Date(r.remindAt).getTime();
+      return !isNaN(remindTime) && remindTime <= nowMs;
+    });
+  }
+
+  public markReminderTriggered(id: string): Reminder | null {
+    const rem = this.data.reminders.find(r => r.id === id);
+    if (rem) {
+      rem.status = 'triggered';
+      rem.updatedAt = new Date().toISOString();
+      this.save();
+      return rem;
+    }
+    return null;
+  }
+
+  public hasNotificationForTaskAndType(taskId: string, type: NotificationType, withinMs?: number): boolean {
+    const now = Date.now();
+    return this.data.notifications.some(n => {
+      if (n.taskId !== taskId || n.type !== type) return false;
+      if (withinMs) {
+        const createdMs = new Date(n.createdAt).getTime();
+        return (now - createdMs) < withinMs;
+      }
+      return true;
+    });
   }
 }
 

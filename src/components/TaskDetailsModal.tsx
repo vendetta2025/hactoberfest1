@@ -52,9 +52,12 @@ export const TaskDetailsModal: React.FC<TaskDetailsModalProps> = ({
 
       setTitle(res.task.title);
       setDescription(res.task.description || '');
-      // Format to YYYY-MM-DD for date input
-      const dateObj = new Date(res.task.deadline);
-      setDeadlineDate(dateObj.toISOString().split('T')[0]);
+      if (res.task.deadline && !isNaN(new Date(res.task.deadline).getTime())) {
+        const dateObj = new Date(res.task.deadline);
+        setDeadlineDate(dateObj.toISOString().split('T')[0]);
+      } else {
+        setDeadlineDate('');
+      }
       setStatus(res.task.status);
 
       // Load task activity

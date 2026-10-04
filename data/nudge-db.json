@@ -186,5 +186,6 @@
       "createdAt": "2026-10-02T10:15:00.000Z"
     }
   ],
-  "changeRequests": []
+  "changeRequests": [],
+  "pushSubscriptions": []
 }

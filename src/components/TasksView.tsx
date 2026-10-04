@@ -136,13 +136,16 @@ export const TasksView: React.FC<TasksViewProps> = ({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {filteredTasks.map(task => {
             const isOwner = task.ownerId === currentUser.id;
-            const deadlineObj = new Date(task.deadline);
-            const isPast = deadlineObj.getTime() < Date.now();
-            const formattedDate = deadlineObj.toLocaleDateString('en-US', {
-              month: 'short',
-              day: 'numeric',
-              year: 'numeric',
-            });
+            const hasDeadline = Boolean(task.deadline && !isNaN(new Date(task.deadline).getTime()));
+            const deadlineObj = hasDeadline ? new Date(task.deadline) : null;
+            const isPast = deadlineObj ? deadlineObj.getTime() < Date.now() : false;
+            const formattedDate = deadlineObj
+              ? deadlineObj.toLocaleDateString('en-US', {
+                  month: 'short',
+                  day: 'numeric',
+                  year: 'numeric',
+                })
+              : 'No deadline';
 
             return (
               <div

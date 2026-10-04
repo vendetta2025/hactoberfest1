@@ -149,6 +149,19 @@ export const api = {
     return request<Reminder[]>('/api/reminders');
   },
 
+  async createReminder(data: { taskId?: string; taskTitle?: string; remindAt: string; label?: string; offsetHoursBefore?: number }): Promise<Reminder> {
+    return request<Reminder>('/api/reminders', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async deleteReminder(id: string): Promise<{ success: boolean }> {
+    return request<{ success: boolean }>(`/api/reminders/${id}`, {
+      method: 'DELETE',
+    });
+  },
+
   // Notifications
   async getNotifications(): Promise<Notification[]> {
     return request<Notification[]>('/api/notifications');
@@ -184,6 +197,35 @@ export const api = {
     return request<NudgeCommandResult>('/api/nudge-command', {
       method: 'POST',
       body: JSON.stringify({ prompt }),
+    });
+  },
+
+  // Web Push API
+  async getVapidPublicKey(): Promise<{ publicKey: string }> {
+    return request<{ publicKey: string }>('/api/push/vapid-public-key');
+  },
+
+  async savePushSubscription(subscription: any): Promise<{ success: boolean }> {
+    return request<{ success: boolean }>('/api/push/subscribe', {
+      method: 'POST',
+      body: JSON.stringify(subscription),
+    });
+  },
+
+  async removePushSubscription(endpoint?: string): Promise<{ success: boolean }> {
+    return request<{ success: boolean }>('/api/push/unsubscribe', {
+      method: 'POST',
+      body: JSON.stringify({ endpoint }),
+    });
+  },
+
+  async getPushStatus(): Promise<{ enabled: boolean; subscriptionCount: number; hasActiveSubscription: boolean }> {
+    return request<{ enabled: boolean; subscriptionCount: number; hasActiveSubscription: boolean }>('/api/push/status');
+  },
+
+  async sendTestPushNotification(): Promise<{ success: boolean; message: string; sentCount: number; failedCount: number }> {
+    return request<{ success: boolean; message: string; sentCount: number; failedCount: number }>('/api/push/test', {
+      method: 'POST',
     });
   },
 

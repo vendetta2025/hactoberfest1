@@ -25,6 +25,7 @@ import { LandingView } from './components/LandingView';
 import { TaskDetailsModal } from './components/TaskDetailsModal';
 import { NewTaskModal } from './components/NewTaskModal';
 import { DemoScenarioModal } from './components/DemoScenarioModal';
+import { getServiceWorkerRegistration } from './pushManager';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -100,6 +101,23 @@ export default function App() {
 
   useEffect(() => {
     initAuth();
+    getServiceWorkerRegistration();
+
+    // Check URL parameters when opened via a Web Push notification click
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const tabParam = urlParams.get('tab');
+      const taskIdParam = urlParams.get('taskId');
+
+      if (tabParam) {
+        setCurrentTab(tabParam);
+      }
+      if (taskIdParam) {
+        setSelectedTaskId(taskIdParam);
+      }
+    } catch (e) {
+      console.warn('[App] Could not parse notification deep-link:', e);
+    }
   }, []);
 
   useEffect(() => {
